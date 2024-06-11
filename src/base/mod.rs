@@ -1,12 +1,7 @@
 pub mod constants;
 
 pub mod app_data {
-    use vulkanalia::vk::DebugUtilsMessengerEXT;
 
-    #[derive(Clone, Debug)]
-    pub struct DebugMessenger {
-        pub messenger: DebugUtilsMessengerEXT,
-    }
 }
 
 pub mod app {
@@ -15,11 +10,11 @@ pub mod app {
      */
 
     use super::constants::*;
-    use super::app_data::*;
 
     use anyhow::{anyhow, Result};
     use log::*;
     
+    use vulkanalia::vk::DebugUtilsMessengerEXT;
     use vulkanalia::vk::ExtDebugUtilsExtension;
     use winit::window::Window;
 
@@ -43,7 +38,7 @@ pub mod app {
     pub struct App {
         pub entry: Entry,
         pub instance: Instance,
-        pub debug_messenger: Option<DebugMessenger>,
+        pub debug_messenger: Option<DebugUtilsMessengerEXT>,
     }
 
     impl App {
@@ -51,14 +46,7 @@ pub mod app {
             // create loader, entry, and instance
             let loader = LibloadingLoader::new(LIBRARY)?;
             let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
-            let instance = create_instance(window, &entry)?;
-
-            // create the debug messenger for the validation layer
-            let debug_messenger = if VALIDATION_ENABLED {
-                Some(create_debug_messenger(&instance)?)
-            } else {
-                None
-            };
+            let (instance, debug_messenger) = create_instance(window, &entry)?;
 
             Ok(Self {
                 entry,
@@ -73,8 +61,8 @@ pub mod app {
 
         pub unsafe fn destroy(&mut self) {
             // destroy the debug messener if it exists
-            match &self.debug_messenger {
-                Some(debug_messenger) => self.instance.destroy_debug_utils_messenger_ext(debug_messenger.messenger, None),
+            match self.debug_messenger {
+                Some(messenger) => self.instance.destroy_debug_utils_messenger_ext(messenger, None),
                 _ => {}
             };
 
@@ -86,7 +74,7 @@ pub mod app {
      * creation functions
      */
 
-    unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
+    unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<(Instance, Option<DebugUtilsMessengerEXT>)> {
         // create application info struct
         let application_info = vk::ApplicationInfo::builder()
             .application_name(b"Vulkan Testing\0")
@@ -131,28 +119,36 @@ pub mod app {
             vk::InstanceCreateFlags::empty()
         };
 
-        let info = vk::InstanceCreateInfo::builder()
+        if VALIDATION_ENABLED {
+            extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
+        }
+
+        let mut info = vk::InstanceCreateInfo::builder()
             .application_info(&application_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions)
             .flags(flags);
 
-        Ok(entry.create_instance(&info, None)?)
-    }
+        // set up validation for create instance call if enabled
+        let mut debug_messenger: Option<DebugUtilsMessengerEXT> = None;
 
-    unsafe fn create_debug_messenger(instance: &Instance) -> Result<DebugMessenger> {
-        assert!(VALIDATION_ENABLED);
+        let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+                .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+                .user_callback(Some(debug_callback));
 
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-            .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
-            .user_callback(Some(debug_callback));
+        if VALIDATION_ENABLED {
+            info = info.push_next(&mut debug_info);
+        }
 
-        let messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
+        let instance = entry.create_instance(&info, None)?;
 
-        Ok(DebugMessenger {
-            messenger,
-        })
+        // create debug messenger if validation is enabled
+        if VALIDATION_ENABLED {
+            debug_messenger = Some(instance.create_debug_utils_messenger_ext(&debug_info, None)?);
+        }
+        
+        Ok((instance, debug_messenger))
     }
 
     // debug callback for validation layer
