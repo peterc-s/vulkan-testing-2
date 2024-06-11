@@ -6,7 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.86"
+cgmath = "0.18.0"
 log = "0.4.21"
+png = "0.17.13"
 pretty_env_logger = "0.5.0"
+thiserror = "1.0.61"
+tobj = "4.0.2"
 vulkanalia = "0.23.0"
 winit = "0.30.1"
