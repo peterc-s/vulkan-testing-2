@@ -1,27 +1,25 @@
 pub mod constants;
 
-pub mod app_data {
-
-}
-
 pub mod app {
     /*
      * imports
      */
 
     use super::constants::*;
+    use data::QueueFamilyIndices;
 
+    use thiserror::Error;
     use anyhow::{anyhow, Result};
     use log::*;
     
-    use vulkanalia::vk::DebugUtilsMessengerEXT;
-    use vulkanalia::vk::ExtDebugUtilsExtension;
     use winit::window::Window;
 
     use vulkanalia::{
         loader::{LibloadingLoader, LIBRARY},
         window as vk_window,
         prelude::v1_0::*,
+        vk::{DebugUtilsMessengerEXT, ExtDebugUtilsExtension},
+        Instance,
     };
 
     use std::{
@@ -39,6 +37,7 @@ pub mod app {
         pub entry: Entry,
         pub instance: Instance,
         pub debug_messenger: Option<DebugUtilsMessengerEXT>,
+        pub phys_device: vk::PhysicalDevice,
     }
 
     impl App {
@@ -48,10 +47,13 @@ pub mod app {
             let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
             let (instance, debug_messenger) = create_instance(window, &entry)?;
 
+            let phys_device = choose_physical_device(&instance)?;
+
             Ok(Self {
                 entry,
                 instance,
                 debug_messenger,
+                phys_device,
             })
         }
 
@@ -151,6 +153,34 @@ pub mod app {
         Ok((instance, debug_messenger))
     }
 
+    // used for GPU suitability
+    #[derive(Debug, Error)]
+    #[error("Missing {0}.")]
+    pub struct SuitabilityError(pub &'static str);
+
+    unsafe fn choose_physical_device(instance: &Instance) -> Result<vk::PhysicalDevice> {
+        for phys_device in instance.enumerate_physical_devices()? {
+            let properties = instance.get_physical_device_properties(phys_device);
+
+            if let Err(error) = check_physical_device(instance, phys_device) {
+                warn!("Skipping physical device ({}): {}", properties.device_name, error)
+            } else {
+                info!("Selected physical device ({})", properties.device_name);
+                return Ok(phys_device);
+            }
+        }
+        
+        Err(anyhow!("Failed to find suitable physical device."))
+    }
+
+    unsafe fn check_physical_device(
+        instance: &Instance,
+        phys_device: vk::PhysicalDevice
+    ) -> Result<()> {
+        QueueFamilyIndices::get(instance, phys_device)?;
+        Ok(())
+    }
+
     // debug callback for validation layer
     extern "system" fn debug_callback(
         severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -172,5 +202,39 @@ pub mod app {
         }
 
         vk::FALSE
+    }
+    
+    pub mod data {
+        use super::SuitabilityError;
+        use vulkanalia::{Instance, vk, prelude::v1_0::*};
+        use anyhow::{Result, anyhow};
+
+        #[derive(Copy, Clone, Debug)]
+        pub struct QueueFamilyIndices {
+            pub graphics: u32,
+        }
+
+        impl QueueFamilyIndices {
+            pub unsafe fn get(
+                instance: &Instance,
+                phys_device: vk::PhysicalDevice,
+            ) -> Result<Self> {
+                let properties = instance
+                    .get_physical_device_queue_family_properties(phys_device);
+
+                let graphics = properties
+                    .iter()
+                    .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+                    .map(|i| i as u32);
+
+                if let Some(graphics) = graphics {
+                    Ok(Self{ graphics })
+                } else {
+                    Err(anyhow!(SuitabilityError("Missing required queue families.")))
+                }
+            }
+        }
+
+
     }
 }
